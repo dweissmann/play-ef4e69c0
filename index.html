@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="theme-color" content="#0b0b10" />
+<title>Play</title>
+<style>
+  :root {
+    --bg1: #141423;
+    --bg2: #0b0b10;
+    --accent: #7c5cff;
+    --accent2: #e86bff;
+    --text: #f4f4fb;
+    --muted: #9a9ab0;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: radial-gradient(130% 120% at 50% 0%, var(--bg1) 0%, var(--bg2) 60%, #050507 100%);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 100dvh;
+    padding: max(24px, env(safe-area-inset-top)) 24px max(24px, env(safe-area-inset-bottom));
+    text-align: center;
+    overflow: hidden;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+
+  .stage { display: flex; flex-direction: column; align-items: center; gap: 40px; width: 100%; max-width: 440px; }
+
+  /* The one button */
+  .go {
+    position: relative;
+    width: min(62vw, 260px);
+    height: min(62vw, 260px);
+    border: none;
+    border-radius: 50%;
+    cursor: pointer;
+    color: #fff;
+    background:
+      radial-gradient(120% 120% at 30% 25%, var(--accent2) 0%, var(--accent) 55%, #4a32c8 100%);
+    box-shadow:
+      0 0 0 1px rgba(255,255,255,0.08) inset,
+      0 20px 60px rgba(124,92,255,0.45),
+      0 0 120px rgba(232,107,255,0.25);
+    display: grid;
+    place-items: center;
+    transition: transform .15s ease, box-shadow .25s ease;
+    touch-action: manipulation;
+  }
+  .go:active { transform: scale(0.96); }
+  .go svg { width: 40%; height: 40%; display: block; filter: drop-shadow(0 4px 12px rgba(0,0,0,0.35)); }
+  .go .pause-icon { display: none; }
+  body.playing .go .play-icon { display: none; }
+  body.playing .go .pause-icon { display: block; }
+
+  /* Pulsing ring while playing */
+  .go::after {
+    content: "";
+    position: absolute;
+    inset: -14px;
+    border-radius: 50%;
+    border: 2px solid rgba(232,107,255,0.5);
+    opacity: 0;
+  }
+  body.playing .go::after { animation: pulse 2.4s ease-out infinite; }
+  @keyframes pulse {
+    0%   { opacity: .6; transform: scale(1); }
+    100% { opacity: 0;  transform: scale(1.18); }
+  }
+
+  .label { font-size: 15px; letter-spacing: .28em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+
+  .now {
+    min-height: 48px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    width: 100%;
+    opacity: 0;
+    transition: opacity .4s ease;
+  }
+  body.started .now { opacity: 1; }
+  .now .title { font-size: 20px; font-weight: 600; line-height: 1.25; }
+  .now .count { font-size: 13px; color: var(--muted); letter-spacing: .04em; }
+
+  .bar {
+    width: 100%;
+    height: 4px;
+    border-radius: 999px;
+    background: rgba(255,255,255,0.1);
+    overflow: hidden;
+    opacity: 0;
+    transition: opacity .4s ease;
+  }
+  body.started .bar { opacity: 1; }
+  .bar > span { display: block; height: 100%; width: 0%; background: linear-gradient(90deg, var(--accent), var(--accent2)); transition: width .25s linear; }
+
+  .empty { color: var(--muted); font-size: 15px; line-height: 1.6; max-width: 320px; }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+  <div class="stage">
+    <div class="label" id="label">Tap to play</div>
+
+    <button class="go" id="go" aria-label="Play">
+      <svg class="play-icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>
+      <svg class="pause-icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 5h4v14H6zM14 5h4v14h-4z"/></svg>
+    </button>
+
+    <div class="now" id="now">
+      <div class="title" id="title"></div>
+      <div class="count" id="count"></div>
+    </div>
+    <div class="bar" id="barWrap"><span id="bar"></span></div>
+
+    <p class="empty hidden" id="empty">No tracks loaded yet.</p>
+  </div>
+
+  <audio id="audio" preload="auto" playsinline></audio>
+
+  <script src="playlist.js"></script>
+  <script>
+  (function () {
+    var TRACKS = (window.TRACKS || []);
+    var audio = document.getElementById('audio');
+    var go = document.getElementById('go');
+    var label = document.getElementById('label');
+    var titleEl = document.getElementById('title');
+    var countEl = document.getElementById('count');
+    var bar = document.getElementById('bar');
+    var empty = document.getElementById('empty');
+
+    var index = 0;
+    var started = false;
+
+    if (!TRACKS.length) {
+      go.classList.add('hidden');
+      label.classList.add('hidden');
+      empty.classList.remove('hidden');
+      return;
+    }
+
+    function prettyName(t) {
+      if (t.title) return t.title;
+      var n = decodeURIComponent((t.src || '').split('/').pop() || '');
+      return n.replace(/\.[a-z0-9]+$/i, '').replace(/^\d+[\s._-]+/, '').replace(/[_]+/g, ' ').trim();
+    }
+
+    function load(i) {
+      index = i;
+      audio.src = TRACKS[i].src;
+      titleEl.textContent = prettyName(TRACKS[i]);
+      countEl.textContent = 'Track ' + (i + 1) + ' of ' + TRACKS.length;
+      bar.style.width = '0%';
+    }
+
+    function play() {
+      audio.play().then(function () {
+        document.body.classList.add('playing', 'started');
+        started = true;
+        label.textContent = 'Playing';
+      }).catch(function () {
+        document.body.classList.remove('playing');
+      });
+    }
+
+    function pause() {
+      audio.pause();
+      document.body.classList.remove('playing');
+      label.textContent = 'Paused';
+    }
+
+    go.addEventListener('click', function () {
+      if (!started) { load(0); play(); return; }
+      if (audio.paused) { play(); } else { pause(); }
+    });
+
+    audio.addEventListener('timeupdate', function () {
+      if (audio.duration) bar.style.width = (audio.currentTime / audio.duration * 100) + '%';
+    });
+
+    audio.addEventListener('ended', function () {
+      if (index < TRACKS.length - 1) {
+        load(index + 1);
+        play();
+      } else {
+        document.body.classList.remove('playing');
+        label.textContent = 'Done';
+        bar.style.width = '100%';
+        started = false;
+      }
+    });
+
+    // Lock screen / headphone controls
+    if ('mediaSession' in navigator) {
+      navigator.mediaSession.setActionHandler('play', play);
+      navigator.mediaSession.setActionHandler('pause', pause);
+      navigator.mediaSession.setActionHandler('nexttrack', function () {
+        if (index < TRACKS.length - 1) { load(index + 1); play(); }
+      });
+      navigator.mediaSession.setActionHandler('previoustrack', function () {
+        if (index > 0) { load(index - 1); play(); }
+      });
+    }
+  })();
+  </script>
+</body>
+</html>
