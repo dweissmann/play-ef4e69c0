@@ -105,6 +105,32 @@
   .bar > span { display: block; height: 100%; width: 0%; background: linear-gradient(90deg, var(--accent), var(--accent2)); transition: width .25s linear; }
 
   .empty { color: var(--muted); font-size: 15px; line-height: 1.6; max-width: 320px; }
+  .shuffle {
+    display: inline-flex;
+    align-items: center;
+    gap: 9px;
+    padding: 10px 18px;
+    border-radius: 999px;
+    border: 1px solid rgba(255,255,255,0.14);
+    background: rgba(255,255,255,0.05);
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: .18em;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: color .2s ease, background .2s ease, border-color .2s ease, box-shadow .2s ease, opacity .3s ease;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .shuffle svg { width: 16px; height: 16px; }
+  .shuffle[aria-pressed="true"] {
+    color: #fff;
+    border-color: transparent;
+    background: linear-gradient(90deg, var(--accent), var(--accent2));
+    box-shadow: 0 8px 24px rgba(124,92,255,0.35);
+  }
+  body.started .shuffle { opacity: 0; pointer-events: none; }
   .hidden { display: none !important; }
 </style>
 </head>
@@ -123,6 +149,11 @@
     </div>
     <div class="bar" id="barWrap"><span id="bar"></span></div>
 
+    <button class="shuffle" id="shuffle" aria-pressed="false" aria-label="Shuffle">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 3h5v5"/><path d="M4 20 21 3"/><path d="M21 16v5h-5"/><path d="M15 15l6 6"/><path d="M4 4l5 5"/></svg>
+      <span>Shuffle</span>
+    </button>
+
     <p class="empty hidden" id="empty">No tracks loaded yet.</p>
   </div>
 
@@ -140,12 +171,17 @@
     var bar = document.getElementById('bar');
     var empty = document.getElementById('empty');
 
-    var index = 0;
+    var shuffleBtn = document.getElementById('shuffle');
+
+    var order = [];        // play order: indices into TRACKS
+    var pos = 0;           // current position within order
     var started = false;
+    var shuffleOn = false;
 
     if (!TRACKS.length) {
       go.classList.add('hidden');
       label.classList.add('hidden');
+      shuffleBtn.classList.add('hidden');
       empty.classList.remove('hidden');
       return;
     }
@@ -156,19 +192,33 @@
       return n.replace(/\.[a-z0-9]+$/i, '').replace(/^\d+[\s._-]+/, '').replace(/[_]+/g, ' ').trim();
     }
 
-    function load(i) {
-      index = i;
-      audio.src = TRACKS[i].src;
-      titleEl.textContent = prettyName(TRACKS[i]);
-      countEl.textContent = 'Track ' + (i + 1) + ' of ' + TRACKS.length;
+    function buildOrder() {
+      order = TRACKS.map(function (_, i) { return i; });
+      if (shuffleOn) {
+        for (var i = order.length - 1; i > 0; i--) {
+          var j = Math.floor(Math.random() * (i + 1));
+          var tmp = order[i]; order[i] = order[j]; order[j] = tmp;
+        }
+      }
+    }
+
+    function load(p) {
+      pos = p;
+      var t = TRACKS[order[p]];
+      audio.src = t.src;
+      titleEl.textContent = prettyName(t);
+      countEl.textContent = 'Track ' + (p + 1) + ' of ' + TRACKS.length;
       bar.style.width = '0%';
+      if ('mediaSession' in navigator && window.MediaMetadata) {
+        try { navigator.mediaSession.metadata = new MediaMetadata({ title: prettyName(t) }); } catch (e) {}
+      }
     }
 
     function play() {
       audio.play().then(function () {
         document.body.classList.add('playing', 'started');
         started = true;
-        label.textContent = 'Playing';
+        label.textContent = shuffleOn ? 'Playing · shuffled' : 'Playing';
       }).catch(function () {
         document.body.classList.remove('playing');
       });
@@ -180,8 +230,13 @@
       label.textContent = 'Paused';
     }
 
+    shuffleBtn.addEventListener('click', function () {
+      shuffleOn = !shuffleOn;
+      shuffleBtn.setAttribute('aria-pressed', shuffleOn ? 'true' : 'false');
+    });
+
     go.addEventListener('click', function () {
-      if (!started) { load(0); play(); return; }
+      if (!started) { buildOrder(); load(0); play(); return; }
       if (audio.paused) { play(); } else { pause(); }
     });
 
@@ -190,11 +245,11 @@
     });
 
     audio.addEventListener('ended', function () {
-      if (index < TRACKS.length - 1) {
-        load(index + 1);
+      if (pos < order.length - 1) {
+        load(pos + 1);
         play();
       } else {
-        document.body.classList.remove('playing');
+        document.body.classList.remove('playing', 'started');
         label.textContent = 'Done';
         bar.style.width = '100%';
         started = false;
@@ -206,10 +261,10 @@
       navigator.mediaSession.setActionHandler('play', play);
       navigator.mediaSession.setActionHandler('pause', pause);
       navigator.mediaSession.setActionHandler('nexttrack', function () {
-        if (index < TRACKS.length - 1) { load(index + 1); play(); }
+        if (pos < order.length - 1) { load(pos + 1); play(); }
       });
       navigator.mediaSession.setActionHandler('previoustrack', function () {
-        if (index > 0) { load(index - 1); play(); }
+        if (pos > 0) { load(pos - 1); play(); }
       });
     }
   })();
