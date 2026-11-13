@@ -29,7 +29,7 @@ try {
 } catch (e) { /* no previous file */ }
 
 const tracks = files.map(f => {
-  const src = 'audio/' + f;
+  const src = 'audio/' + encodeURIComponent(f); // handle spaces, commas, punctuation
   const t = { src };
   if (existingTitles[src]) t.title = existingTitles[src];
   return t;
